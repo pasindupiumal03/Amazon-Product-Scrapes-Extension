@@ -2,34 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
-@font-face {
-  font-family: "Poppins";
-  src: url("./assets/fonts/Poppins.ttf") format("truetype");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  font-family: "Poppins";
-  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
 }
-html {
-  overflow: hidden;
-}
-body {
+
+html, body, #react-target {
   width: 400px;
   height: 600px;
   min-height: 600px;
-  overflow: hidden;
   background: #f9fafb;
   color: #000000;
-}
-
-#react-target {
-  width: 100%;
-  height: 100%;
 }

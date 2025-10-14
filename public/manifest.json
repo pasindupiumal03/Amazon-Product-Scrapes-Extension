@@ -1,15 +1,10 @@
 {
-  "name": "Extension Name",
-  "version": "1.0",
-  "description": "",
+  "name": "Amazon ➜ Google Sheets Scraper",
+  "version": "1.0.0",
+  "description": "Scrape Amazon product data by ASIN and save to Google Sheets with optional OCR.",
   "manifest_version": 3,
-  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"] }],
-  "action": {
-    "default_popup": "popup.html"
-  },
-  "background": {
-    "service_worker": "background.js"
-  },
+  "action": { "default_popup": "popup.html" },
+  "background": { "service_worker": "background.js" },
   "icons": {
     "16": "./assets/icons/16.png",
     "32": "./assets/icons/32.png",
@@ -17,5 +12,18 @@
     "64": "./assets/icons/64.png",
     "128": "./assets/icons/128.png"
   },
-  "permissions": ["storage"]
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "<all_urls>",
+    "https://vision.googleapis.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }
