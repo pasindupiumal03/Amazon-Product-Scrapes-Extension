@@ -1,7 +1,7 @@
 {
-  "name": "Amazon ➜ Google Sheets Scraper",
+  "name": "Amazon Product Scraper",
   "version": "1.0.0",
-  "description": "Scrape Amazon product data by ASIN and save to Google Sheets with optional OCR.",
+  "description": "Modern extension to scrape Amazon product data and save to Google Sheets with OCR support.",
   "manifest_version": 3,
   "action": { "default_popup": "popup.html" },
   "background": { "service_worker": "background.js" },
