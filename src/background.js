@@ -1,4 +1,4 @@
-// Background orchestrator: fetch ASINs -> open tabs -> scrape -> OCR -> write to Sheets
+// Background orchestrator: fetch NEW ASINs -> open tabs -> scrape -> OCR -> write to Sheets
 
 const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,13 +45,18 @@ function extractAsin(s) {
 }
 
 // ---- Google Apps Script I/O ----
-async function fetchAsins(GAS_ENDPOINT) {
-  const url = `${GAS_ENDPOINT}?mode=get_asins`;
+
+// ✅ Only fetch NEW (unprocessed) ASINs
+async function fetchNewAsins(GAS_ENDPOINT) {
+  const url = `${GAS_ENDPOINT}?mode=get_new_asins`;
   const r = await fetch(url, { method: "GET" });
   if (!r.ok) throw new Error(`ASIN fetch failed: ${r.status}`);
   const json = await r.json();
   return Array.isArray(json.asins) ? json.asins : [];
 }
+
+// (kept for completeness; not used now)
+// async function fetchAsins(GAS_ENDPOINT) { ... }
 
 async function writeRow(GAS_ENDPOINT, payload) {
   const r = await fetch(`${GAS_ENDPOINT}?mode=write_row`, {
@@ -118,9 +123,7 @@ function waitForScrapeFromTab(tabId, asin, timeoutMs = 35000) {
       if (done) return;
       done = true;
       resolve({ asin, ok: false, error: "timeout" });
-      try {
-        chrome.tabs.remove(tabId);
-      } catch (_) {}
+      try { chrome.tabs.remove(tabId); } catch (_) {}
     }, timeoutMs);
 
     const listener = (msg, sender) => {
@@ -131,9 +134,7 @@ function waitForScrapeFromTab(tabId, asin, timeoutMs = 35000) {
         clearTimeout(t);
         chrome.runtime.onMessage.removeListener(listener);
         resolve({ asin, ok: true, data: msg.data });
-        try {
-          chrome.tabs.remove(tabId);
-        } catch (_) {}
+        try { chrome.tabs.remove(tabId); } catch (_) {}
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -147,7 +148,8 @@ async function processOne(asin, cfg) {
 
   if (!result.ok || !result.data) {
     return { asin, ok: false, error: result.error || "no_data" };
-    }
+  }
+
   let ocrText = "";
   try {
     ocrText = await ocrWithVision(cfg.VISION_API_KEY, result.data.imageUrls || []);
@@ -165,6 +167,7 @@ async function processOne(asin, cfg) {
     ocrText
   };
 
+  // ✅ This write marks the ASIN as processed on the server side
   await writeRow(cfg.GAS_ENDPOINT, payload);
   return { asin, ok: true };
 }
@@ -181,15 +184,18 @@ async function startScrape() {
 
   let raw = [];
   try {
-    raw = await fetchAsins(cfg.GAS_ENDPOINT);
+    // ✅ only get NEW (unprocessed) ASINs
+    raw = await fetchNewAsins(cfg.GAS_ENDPOINT);
   } catch (e) {
     chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "error", message: String(e) });
     return;
   }
 
   const asins = raw.map((x) => extractAsin(String(x || "").trim())).filter(Boolean);
+
   if (asins.length === 0) {
-    chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "error", message: "No valid ASINs found in Column A." });
+    chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "info", message: "No new ASINs to process." });
+    await setBadge("");
     return;
   }
 

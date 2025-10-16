@@ -22,6 +22,7 @@ function Popup() {
         else if (msg.status === "done")
           setStatus(`Done ✅  Success: ${msg.success}  Failed: ${msg.failed}  Total: ${msg.total}`);
         else if (msg.status === "error") setStatus(`Error: ${msg.message}`);
+        else if (msg.status === "info") setStatus(`ℹ️ ${msg.message}`);
       }
       if (msg?.type === "RUN_PROGRESS") {
         setProgress({ idx: msg.index, total: msg.total, asin: msg.asin });
