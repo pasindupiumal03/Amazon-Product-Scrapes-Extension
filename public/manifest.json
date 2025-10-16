@@ -16,6 +16,7 @@
   "host_permissions": [
     "<all_urls>",
     "https://vision.googleapis.com/*",
+    "https://api.ocr.space/*",
     "https://script.google.com/*",
     "https://script.googleusercontent.com/*"
   ],

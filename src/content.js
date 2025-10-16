@@ -120,6 +120,37 @@
     
     return "";
   }
+  function getBrandImageUrls() {
+    const urls = new Set();
+    const brandSection = q("#aplusBrandStory_feature_div") || 
+                         q("[data-feature-name='aplusBrandStory']") ||
+                         q("#aplus_feature_div [data-module-name='aplusBrandStory']");
+    if (brandSection) {
+      qa("img", brandSection).forEach((img) => {
+        const src = img.getAttribute("src") || img.getAttribute("data-src") || "";
+        if (src) urls.add(src);
+      });
+    }
+    return Array.from(urls);
+  }
+  function getDescriptionImageUrls() {
+    const urls = new Set();
+    const pd = q("#productDescription");
+    if (pd) {
+      qa("img", pd).forEach((img) => {
+        const src = img.getAttribute("src") || img.getAttribute("data-src") || "";
+        if (src) urls.add(src);
+      });
+    }
+    const aplus = q("#aplus_feature_div");
+    if (aplus) {
+      qa("img", aplus).forEach((img) => {
+        const src = img.getAttribute("src") || img.getAttribute("data-src") || "";
+        if (src) urls.add(src);
+      });
+    }
+    return Array.from(urls);
+  }
   function getImageUrls() {
     const urls = new Set();
     const main = q("#imgTagWrapperId img") || q("#landingImage");
@@ -147,7 +178,9 @@
       manufacturer: getManufacturer(),
       brandInfo: getBrandInfo(),
       manufacturerInfo: getManufacturerInfo(),
-      imageUrls: getImageUrls()
+      imageUrls: getImageUrls(),
+      brandImageUrls: getBrandImageUrls(),
+      descriptionImageUrls: getDescriptionImageUrls()
     };
 
     chrome.runtime.sendMessage({ type: "SCRAPE_RESULT", data });
