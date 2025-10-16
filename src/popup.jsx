@@ -109,15 +109,15 @@ function Popup() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Google Vision API Key (Optional)
+                OCR.space API Key (Optional)
               </label>
               <input
                 value={vision}
                 onChange={(e) => setVision(e.target.value)}
-                placeholder="AIzaSy... (for OCR text extraction)"
+                placeholder="K85105510988957 (for OCR text extraction)"
                 className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors text-sm"
               />
-              <p className="text-xs text-gray-500 mt-1">Enable OCR to extract text from product images</p>
+              <p className="text-xs text-gray-500 mt-1">Provide your OCR.space API key to extract text from product images</p>
             </div>
 
             <div>

@@ -63,43 +63,44 @@ async function writeRow(GAS_ENDPOINT, payload) {
   return r.json();
 }
 
-// ---- OCR with Google Vision (optional) ----
-async function ocrWithVision(visionKey, imageUrls = []) {
-  if (!visionKey || !imageUrls.length) return "";
-  const topN = imageUrls.slice(0, 3);
-  let ocrTexts = [];
+// ---- OCR with OCR.space (optional) ----
+async function ocrWithOcrSpace(apiKey, imageUrls = []) {
+  if (!apiKey || !imageUrls.length) return "";
+  const topImages = imageUrls.slice(0, 3);
+  const aggregatedTexts = [];
 
-  for (const url of topN) {
+  for (const imageUrl of topImages) {
     try {
-      const b = await fetch(url);
-      const blob = await b.blob();
-      const buff = await blob.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(buff)));
+      const form = new URLSearchParams({
+        url: imageUrl,
+        language: "eng", // default to English; OCR Engine 2 supports auto with "auto"
+        OCREngine: "2",
+        isOverlayRequired: "false",
+        scale: "true",
+        isTable: "false"
+      });
 
-      const body = {
-        requests: [
-          {
-            image: { content: base64 },
-            features: [{ type: "DOCUMENT_TEXT_DETECTION" }]
-          }
-        ]
-      };
-
-      const resp = await fetch(
-        `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(visionKey)}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
-      );
+      const resp = await fetch("https://api.ocr.space/parse/image", {
+        method: "POST",
+        headers: {
+          "apikey": apiKey,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: form.toString()
+      });
 
       const json = await resp.json();
-      const text = json?.responses?.[0]?.fullTextAnnotation?.text || "";
-      if (text) ocrTexts.push(text.trim());
+      const parts = (json?.ParsedResults || [])
+        .map((p) => (p?.ParsedText || "").trim())
+        .filter(Boolean);
+      if (parts.length) aggregatedTexts.push(parts.join("\n").trim());
       await SLEEP(400);
     } catch {
-      // skip this image on error
+      // ignore single-image OCR errors
     }
   }
 
-  return ocrTexts.join("\n\n").trim();
+  return aggregatedTexts.join("\n\n").trim();
 }
 
 // ---- Tab + Scrape coordination ----
@@ -150,7 +151,12 @@ async function processOne(asin, cfg) {
     }
   let ocrText = "";
   try {
-    ocrText = await ocrWithVision(cfg.VISION_API_KEY, result.data.imageUrls || []);
+    const prioritized = [
+      ...(result.data.brandImageUrls || []),
+      ...(result.data.descriptionImageUrls || []),
+      ...(result.data.imageUrls || [])
+    ].filter(Boolean);
+    ocrText = await ocrWithOcrSpace(cfg.VISION_API_KEY, prioritized);
   } catch {}
 
   const payload = {
