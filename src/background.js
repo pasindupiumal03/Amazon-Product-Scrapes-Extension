@@ -160,6 +160,8 @@ async function processOne(asin, cfg) {
     description: result.data.description || "",
     brand: result.data.brand || "",
     manufacturer: result.data.manufacturer || "",
+    brandInfo: result.data.brandInfo || "",
+    manufacturerInfo: result.data.manufacturerInfo || "",
     ocrText
   };
 

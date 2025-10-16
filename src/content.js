@@ -51,11 +51,74 @@
   }
   function getBrand() {
     const byline = txt(q("#bylineInfo"));
-    if (byline) return byline.replace(/^Brand:\s*/i, "");
+    if (byline) {
+      let brand = byline.replace(/^Brand:\s*/i, "");
+      // Remove "Visit the ... Store" pattern
+      brand = brand.replace(/^Visit the\s+(.+?)\s+Store$/i, "$1");
+      return brand;
+    }
     return readFromDetailsTables(["brand", "brand name"]);
   }
   function getManufacturer() {
     return readFromDetailsTables(["manufacturer", "manufacturer ‏"]);
+  }
+  function getBrandInfo() {
+    // Look for "From the brand" section below bullet points
+    const brandSection = q("#aplusBrandStory_feature_div") || 
+                         q("[data-feature-name='aplusBrandStory']") ||
+                         q("#aplus_feature_div [data-module-name='aplusBrandStory']");
+    
+    if (brandSection) {
+      const text = txt(brandSection);
+      if (text) return text;
+    }
+    
+    // Alternative selectors for brand content
+    const brandHeaders = qa("h3, h4, .a-text-bold").filter(h => 
+      /from\s+the\s+brand/i.test(txt(h))
+    );
+    
+    for (const header of brandHeaders) {
+      let content = "";
+      let nextEl = header.nextElementSibling;
+      while (nextEl && !nextEl.matches("h1, h2, h3, h4, h5, h6")) {
+        const elText = txt(nextEl);
+        if (elText) content += elText + "\n";
+        nextEl = nextEl.nextElementSibling;
+      }
+      if (content.trim()) return content.trim();
+    }
+    
+    return "";
+  }
+  function getManufacturerInfo() {
+    // Look for "From the manufacturer" section below bullet points
+    const mfgSection = q("#aplusManufacturerDescription_feature_div") || 
+                      q("[data-feature-name='aplusManufacturerDescription']") ||
+                      q("#aplus_feature_div [data-module-name='aplusManufacturerDescription']");
+    
+    if (mfgSection) {
+      const text = txt(mfgSection);
+      if (text) return text;
+    }
+    
+    // Alternative selectors for manufacturer content
+    const mfgHeaders = qa("h3, h4, .a-text-bold").filter(h => 
+      /from\s+the\s+manufacturer/i.test(txt(h))
+    );
+    
+    for (const header of mfgHeaders) {
+      let content = "";
+      let nextEl = header.nextElementSibling;
+      while (nextEl && !nextEl.matches("h1, h2, h3, h4, h5, h6")) {
+        const elText = txt(nextEl);
+        if (elText) content += elText + "\n";
+        nextEl = nextEl.nextElementSibling;
+      }
+      if (content.trim()) return content.trim();
+    }
+    
+    return "";
   }
   function getImageUrls() {
     const urls = new Set();
@@ -82,6 +145,8 @@
       description: getDescription(),
       brand: getBrand(),
       manufacturer: getManufacturer(),
+      brandInfo: getBrandInfo(),
+      manufacturerInfo: getManufacturerInfo(),
       imageUrls: getImageUrls()
     };
 
