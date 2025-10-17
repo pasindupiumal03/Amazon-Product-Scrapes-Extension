@@ -1,20 +1,21 @@
-// Background orchestrator: fetch ASINs -> open tabs -> scrape -> OCR -> write to Sheets
+// src/background.js
+// Flow: Fetch ASINs → open tab → scrape core → ask content for images (Brand→Manufacturer→Description) → OCR.Space GET → merge & clean → write to Sheets
 
 const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const getCfg = () =>
   new Promise((res) =>
-    chrome.storage.local.get(["GAS_ENDPOINT", "VISION_API_KEY", "AMAZON_DOMAIN"], (v) => res(v))
+    chrome.storage.local.get(["GAS_ENDPOINT", "AMAZON_DOMAIN", "OCR_API_KEY"], (v) => res(v))
   );
 
 const setBadge = async (text, color = "#000") => {
   try {
     await chrome.action.setBadgeText({ text });
     await chrome.action.setBadgeBackgroundColor({ color });
-  } catch (_) {}
+  } catch {}
 };
 
-// --- Helpers ---
+// --------- Helpers ----------
 function extractDomain(input) {
   if (!input) return "amazon.com";
   try {
@@ -28,13 +29,12 @@ function extractDomain(input) {
   }
 }
 
-// Extract 10-char ASINs from either plain ASIN or URLs
 function extractAsin(s) {
   if (!s) return "";
   const patterns = [
     /\/dp\/([A-Z0-9]{10})/i,
     /\/gp\/product\/([A-Z0-9]{10})/i,
-    /[?&]asin=([A-Z0-9]{10})/i
+    /[?&]asin=([A-Z0-9]{10})/i,
   ];
   for (const re of patterns) {
     const m = s.match(re);
@@ -44,10 +44,9 @@ function extractAsin(s) {
   return m ? m[1].toUpperCase() : "";
 }
 
-// ---- Google Apps Script I/O ----
+// --------- GAS I/O ----------
 async function fetchAsins(GAS_ENDPOINT) {
-  const url = `${GAS_ENDPOINT}?mode=get_asins`;
-  const r = await fetch(url, { method: "GET" });
+  const r = await fetch(`${GAS_ENDPOINT}?mode=get_asins`);
   if (!r.ok) throw new Error(`ASIN fetch failed: ${r.status}`);
   const json = await r.json();
   return Array.isArray(json.asins) ? json.asins : [];
@@ -57,53 +56,13 @@ async function writeRow(GAS_ENDPOINT, payload) {
   const r = await fetch(`${GAS_ENDPOINT}?mode=write_row`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(`Write failed ${r.status}`);
   return r.json();
 }
 
-// ---- OCR with OCR.space (optional) ----
-async function ocrWithOcrSpace(apiKey, imageUrls = []) {
-  if (!apiKey || !imageUrls.length) return "";
-  const topImages = imageUrls.slice(0, 3);
-  const aggregatedTexts = [];
-
-  for (const imageUrl of topImages) {
-    try {
-      const form = new URLSearchParams({
-        url: imageUrl,
-        language: "eng", // default to English; OCR Engine 2 supports auto with "auto"
-        OCREngine: "2",
-        isOverlayRequired: "false",
-        scale: "true",
-        isTable: "false"
-      });
-
-      const resp = await fetch("https://api.ocr.space/parse/image", {
-        method: "POST",
-        headers: {
-          "apikey": apiKey,
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: form.toString()
-      });
-
-      const json = await resp.json();
-      const parts = (json?.ParsedResults || [])
-        .map((p) => (p?.ParsedText || "").trim())
-        .filter(Boolean);
-      if (parts.length) aggregatedTexts.push(parts.join("\n").trim());
-      await SLEEP(400);
-    } catch {
-      // ignore single-image OCR errors
-    }
-  }
-
-  return aggregatedTexts.join("\n\n").trim();
-}
-
-// ---- Tab + Scrape coordination ----
+// --------- Tabs & Messaging ----------
 function openAmazonTab(asin, domain) {
   const d = extractDomain(domain || "amazon.com");
   const url = `https://${d}/dp/${encodeURIComponent(asin)}`;
@@ -112,16 +71,13 @@ function openAmazonTab(asin, domain) {
   });
 }
 
-function waitForScrapeFromTab(tabId, asin, timeoutMs = 35000) {
+function waitForScrapeFromTab(tabId, asin, timeoutMs = 40000) {
   return new Promise((resolve) => {
     let done = false;
     const t = setTimeout(() => {
       if (done) return;
       done = true;
       resolve({ asin, ok: false, error: "timeout" });
-      try {
-        chrome.tabs.remove(tabId);
-      } catch (_) {}
     }, timeoutMs);
 
     const listener = (msg, sender) => {
@@ -132,43 +88,134 @@ function waitForScrapeFromTab(tabId, asin, timeoutMs = 35000) {
         clearTimeout(t);
         chrome.runtime.onMessage.removeListener(listener);
         resolve({ asin, ok: true, data: msg.data });
-        try {
-          chrome.tabs.remove(tabId);
-        } catch (_) {}
       }
     };
     chrome.runtime.onMessage.addListener(listener);
   });
 }
 
+function sendMessageWithRetry(tabId, message, retries = 15, delay = 500) {
+  return new Promise((resolve) => {
+    const attempt = (n) => {
+      chrome.tabs.sendMessage(tabId, message, (res) => {
+        const err = chrome.runtime.lastError?.message || "";
+        if (err && n > 0) {
+          setTimeout(() => attempt(n - 1), delay);
+        } else {
+          resolve(res || null);
+        }
+      });
+    };
+    attempt(retries);
+  });
+}
+
+async function getPriorityOcrImages(tabId) {
+  const res = await sendMessageWithRetry(tabId, { type: "GET_OCR_IMAGES" });
+  const list = Array.isArray(res?.images) ? res.images : [];
+  return list.slice(0, 4);
+}
+
+// --------- OCR.Space (GET /parse/imageurl) ----------
+function buildOcrGetUrl(apiKey, imageUrl) {
+  const params = new URLSearchParams({
+    apikey: apiKey,
+    url: imageUrl,
+    language: "eng",
+    isOverlayRequired: "false",
+    OCREngine: "2",
+    scale: "true",
+    isTable: "false",
+  });
+  return `https://api.ocr.space/parse/imageurl?${params.toString()}`;
+}
+
+const SLEEP_BETWEEN_OCR = 900;
+
+async function ocrOneWithRetry(apiKey, imageUrl, tries = 2) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const url = buildOcrGetUrl(apiKey, imageUrl);
+      const resp = await fetch(url, { method: "GET" });
+      const json = await resp.json();
+
+      if (json?.IsErroredOnProcessing) {
+        await SLEEP(1200);
+        continue;
+      }
+
+      const text = (json?.ParsedResults || [])
+        .map((p) => (p?.ParsedText || "").trim())
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+
+      if (text) return text;
+    } catch {
+      // swallow and retry
+    }
+    await SLEEP(1200);
+  }
+  return "";
+}
+
+function cleanMergedOcr(text) {
+  return (text || "")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "")
+    .replace(/\s+[|]\s+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .map((l) => l.replace(/\s{2,}/g, " ").trim())
+    .filter((l, idx, arr) => l && (idx === 0 || l !== arr[idx - 1]))
+    .join("\n");
+}
+
+async function ocrSpaceGetMerged(apiKey, imageUrls = []) {
+  if (!apiKey || !imageUrls.length) return "";
+
+  const results = [];
+  for (const img of imageUrls) {
+    const t = await ocrOneWithRetry(apiKey, img, 2);
+    if (t) results.push(t);
+    await SLEEP(SLEEP_BETWEEN_OCR);
+  }
+
+  return cleanMergedOcr(results.join("\n\n"));
+}
+
+// --------- Orchestration ----------
 async function processOne(asin, cfg) {
   await setBadge("…");
   const tabId = await openAmazonTab(asin, cfg.AMAZON_DOMAIN);
+
+  // Wait for page scrape (title/bullets/description + brand/manufacturer section text)
   const result = await waitForScrapeFromTab(tabId, asin);
+
+  // Ask for OCR images in priority order (Brand→Manufacturer→Description)
+  let ocrText = "";
+  try {
+    const images = await getPriorityOcrImages(tabId); // up to 4
+    if (images.length && cfg.OCR_API_KEY) {
+      ocrText = await ocrSpaceGetMerged(cfg.OCR_API_KEY, images);
+    }
+  } catch {}
+
+  // Close the tab
+  try { chrome.tabs.remove(tabId); } catch {}
 
   if (!result.ok || !result.data) {
     return { asin, ok: false, error: result.error || "no_data" };
-    }
-  let ocrText = "";
-  try {
-    const prioritized = [
-      ...(result.data.brandImageUrls || []),
-      ...(result.data.descriptionImageUrls || []),
-      ...(result.data.imageUrls || [])
-    ].filter(Boolean);
-    ocrText = await ocrWithOcrSpace(cfg.VISION_API_KEY, prioritized);
-  } catch {}
+  }
 
   const payload = {
     asin,
     title: result.data.title || "",
     bullets: (result.data.bullets || []).join("\n"),
     description: result.data.description || "",
+    // IMPORTANT: brand/manufacturer here are now the *section texts* supplied by content.js
     brand: result.data.brand || "",
     manufacturer: result.data.manufacturer || "",
-    brandInfo: result.data.brandInfo || "",
-    manufacturerInfo: result.data.manufacturerInfo || "",
-    ocrText
+    ocrText: ocrText || "",
   };
 
   await writeRow(cfg.GAS_ENDPOINT, payload);
@@ -181,8 +228,12 @@ async function startScrape() {
     chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "error", message: "Set GAS endpoint first." });
     return;
   }
-  cfg.AMAZON_DOMAIN = extractDomain(cfg.AMAZON_DOMAIN || "amazon.com");
+  if (!cfg.OCR_API_KEY) {
+    chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "error", message: "Set OCR API key in settings." });
+    return;
+  }
 
+  cfg.AMAZON_DOMAIN = extractDomain(cfg.AMAZON_DOMAIN || "amazon.com");
   chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "started" });
 
   let raw = [];
@@ -194,7 +245,7 @@ async function startScrape() {
   }
 
   const asins = raw.map((x) => extractAsin(String(x || "").trim())).filter(Boolean);
-  if (asins.length === 0) {
+  if (!asins.length) {
     chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "error", message: "No valid ASINs found in Column A." });
     return;
   }
@@ -203,6 +254,7 @@ async function startScrape() {
   for (let i = 0; i < asins.length; i++) {
     const asin = asins[i];
     chrome.runtime.sendMessage({ type: "RUN_PROGRESS", index: i + 1, total: asins.length, asin });
+
     try {
       const r = await processOne(asin, cfg);
       if (r.ok) success++; else failed++;

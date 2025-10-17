@@ -1,6 +1,6 @@
 {
   "name": "Amazon Product Scraper",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Modern extension to scrape Amazon product data and save to Google Sheets with OCR support.",
   "manifest_version": 3,
   "action": { "default_popup": "popup.html" },
@@ -12,10 +12,9 @@
     "64": "./assets/icons/64.png",
     "128": "./assets/icons/128.png"
   },
-  "permissions": ["storage", "tabs", "scripting"],
+  "permissions": ["storage", "tabs", "scripting", "alarms"],
   "host_permissions": [
     "<all_urls>",
-    "https://vision.googleapis.com/*",
     "https://api.ocr.space/*",
     "https://script.google.com/*",
     "https://script.googleusercontent.com/*"
