@@ -4,15 +4,15 @@ import "./index.css";
 
 function Popup() {
   const [gas, setGas] = useState("");
-  const [vision, setVision] = useState("");
+  const [ocr, setOcr] = useState("");
   const [domain, setDomain] = useState("amazon.com");
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState({ idx: 0, total: 0, asin: "" });
 
   useEffect(() => {
-    chrome.storage.local.get(["GAS_ENDPOINT", "VISION_API_KEY", "AMAZON_DOMAIN"], (v) => {
+    chrome.storage.local.get(["GAS_ENDPOINT", "AMAZON_DOMAIN", "OCR_API_KEY"], (v) => {
       setGas(v.GAS_ENDPOINT || "");
-      setVision(v.VISION_API_KEY || "");
+      setOcr(v.OCR_API_KEY || "");
       setDomain(v.AMAZON_DOMAIN || "amazon.com");
     });
 
@@ -32,6 +32,7 @@ function Popup() {
   }, []);
 
   const save = async () => {
+    // Normalize domain to just host (no protocol, no www)
     const raw = (domain || "").trim();
     let norm = raw;
     try {
@@ -47,7 +48,7 @@ function Popup() {
 
     await chrome.storage.local.set({
       GAS_ENDPOINT: gas.trim(),
-      VISION_API_KEY: vision.trim(),
+      OCR_API_KEY: ocr.trim(),
       AMAZON_DOMAIN: norm
     });
     setDomain(norm);
@@ -58,6 +59,8 @@ function Popup() {
     setStatus("");
     chrome.runtime.sendMessage({ type: "START_SCRAPE" });
   };
+
+  const percent = progress.total > 0 ? Math.round((progress.idx / progress.total) * 100) : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-blue-50">
@@ -77,7 +80,7 @@ function Popup() {
           />
           <div>
             <h1 className="text-white text-xl font-bold">Amazon Product Scraper</h1>
-            <p className="text-orange-100 text-sm">Extract product data to Google Sheets</p>
+            <p className="text-orange-100 text-sm">Extract product data to Google Sheets (with OCR)</p>
           </div>
         </div>
       </div>
@@ -109,15 +112,17 @@ function Popup() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                OCR.space API Key (Optional)
+                OCR.Space API Key (Required)
               </label>
               <input
-                value={vision}
-                onChange={(e) => setVision(e.target.value)}
-                placeholder="K85105510988957 (for OCR text extraction)"
+                value={ocr}
+                onChange={(e) => setOcr(e.target.value)}
+                placeholder="e.g. K8*****88957"
                 className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors text-sm"
               />
-              <p className="text-xs text-gray-500 mt-1">Provide your OCR.space API key to extract text from product images</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Used for extracting text from images in <em>From the brand</em>, <em>From the manufacturer</em>, and <em>Product Description</em>.
+              </p>
             </div>
 
             <div>
@@ -177,13 +182,13 @@ function Popup() {
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm text-gray-600">
                   <span>Processing ASIN {progress.idx} of {progress.total}</span>
-                  <span className="font-medium">{Math.round((progress.idx / progress.total) * 100)}%</span>
+                  <span className="font-medium">{percent}%</span>
                 </div>
                 
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className="bg-gradient-to-r from-orange-500 to-amber-500 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${(progress.idx / progress.total) * 100}%` }}
+                    style={{ width: `${percent}%` }}
                   ></div>
                 </div>
                 
@@ -206,9 +211,9 @@ function Popup() {
           </h3>
           <div className="space-y-2 text-sm text-indigo-700">
             <p>• Put ASINs in Column A of your Google Sheet (starting from A2)</p>
-            <p>• Configure your Google Apps Script Web App URL above</p>
-            <p>• Click "Start Scraping" to begin extracting product data</p>
-            <p>• Data will appear in columns B-G: Title, Bullets, Description, Brand, Manufacturer, OCR Text</p>
+            <p>• Set your Google Apps Script Web App URL and OCR.Space API key above</p>
+            <p>• Click <em>Start Scraping</em> to extract: Title, Bullets, Description, Brand Text, Manufacturer Text, OCR Text</p>
+            <p>• OCR pulls from images found in <em>From the brand</em> → <em>From the manufacturer</em> → <em>Product Description</em> (in that order)</p>
           </div>
         </div>
       </div>
