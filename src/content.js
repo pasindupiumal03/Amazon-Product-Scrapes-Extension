@@ -1,4 +1,3 @@
-// src/content.js
 (() => {
   // Only run on Amazon
   try {
@@ -41,14 +40,17 @@
 
     const hay = (url + " " + (alt || "")).toLowerCase();
     const bad = [
-      "sprite", "spacer", "pixel", "favicon", "icon", "logo",
-      "transparent", "placeholder"
+      "sprite", "spacer", "pixel", "favicon", "icon", "logo", "transparent", "placeholder"
     ];
     if (bad.some(k => hay.includes(k))) return false;
 
-    // Skip known tiny grid thumbs
-    if (/__AC_SR\d{2,3},\d{2,3}__/.test(url)) return false;
-    if (/_SX\d{2,3}_/.test(url)) return false;
+    // Skip commonly small grid thumbs
+    if (/__ac_sr\d{2,3},\d{2,3}__/i.test(url)) return false;
+    if (/_sx\d{2,3}_/i.test(url)) return false;
+    if (/_ss\d{2,3}_/i.test(url)) return false;
+
+    // Many A+ tiles show 166/182/220 widths — usually decorative
+    if (/__ac_sr(16[0-9]|18[0-9]|22[0-9]),/i.test(url)) return false;
 
     return true;
   }
@@ -183,20 +185,17 @@
   }
 
   function nodeHasOnlyMedia(el) {
-    // True if the node (or its descendants) are media-only OR remaining text is negligible
     if (!el) return false;
     const hasMedia =
       el.matches?.("img, picture, svg, video, canvas") ||
       el.querySelector?.("img, picture, svg, video, canvas");
     const t = txt(el);
-    // if media exists and text is empty or just punctuation/short
     if (hasMedia && (!t || t.replace(/[\W_]+/g, "").length < 2)) return true;
     return false;
   }
 
   // ---------------- Rich text extraction for Brand/Manufacturer ----------------
   function collectReadableText(root) {
-    // Only gather clearly copyable body text nodes (avoid buttons, links text like "Visit the Store")
     const nodes = qa(
       [
         "p",
@@ -218,29 +217,23 @@
     const seen = new Set();
 
     nodes.forEach((el) => {
-      // Skip pure-media containers or images-as-text blocks
       if (nodeHasOnlyMedia(el)) return;
 
-      // Defensive: remove any HTML tags and image URLs from the text
       let t = txt(el);
       t = stripHtmlAndImageUrls(t);
       if (!t) return;
 
-      // Skip store promo/navigation lines
       if (/visit\s+the\s+store/i.test(t)) return;
       if (/shop\s+all/i.test(t)) return;
 
-      // Lightweight noise filter
       if (t.length < 3) return;
 
-      // De-dupe by content
       if (!seen.has(t)) {
         seen.add(t);
         lines.push(t);
       }
     });
 
-    // Join into multi-line text
     return lines.join("\n");
   }
 
@@ -252,7 +245,6 @@
     blocks.forEach((b) => {
       const t = collectReadableText(b);
       if (t) {
-        // split by lines to avoid giant dupes
         t.split("\n").forEach((line) => {
           const L = stripHtmlAndImageUrls(line.trim());
           if (L && !seen.has(L)) {
@@ -263,7 +255,6 @@
       }
     });
 
-    // Final tidy
     return chunks
       .map((l) => l.replace(/\s{2,}/g, " ").trim())
       .filter(Boolean)
@@ -322,7 +313,9 @@
       pushMany(descImgs);
     }
 
-    return pick.slice(0, maxCount);
+    // final sanity filter
+    const final = pick.filter((u) => isValidOcrImage(u));
+    return final.slice(0, maxCount);
   }
 
   // ---------------- Product core fields ----------------
@@ -362,21 +355,9 @@
     return "";
   }
 
-  // NOTE: For columns E and F we now want the *text* from Brand/Manufacturer sections
+  // For Sheet columns E/F: supply copyable text from Brand/Manufacturer sections
   const getBrandTextForSheet = () => getBrandTextAll(); // Column E
   const getManufacturerTextForSheet = () => getManufacturerTextAll(); // Column F (may be "")
-
-  // (Optional fallback getters kept if needed elsewhere)
-  const getBrandName = () => {
-    const byline = txt(q("#bylineInfo"));
-    if (byline) {
-      let brand = byline.replace(/^Brand:\s*/i, "");
-      brand = brand.replace(/^Visit the\s+(.+?)\s+Store$/i, "$1");
-      return brand;
-    }
-    return readFromDetailsTables(["brand", "brand name"]);
-  };
-  const getManufacturerName = () => readFromDetailsTables(["manufacturer", "manufacturer ‏"]);
 
   function sendCore() {
     const titleEl = q("#productTitle");
@@ -386,7 +367,6 @@
       title: getTitle(),
       bullets: getBullets(),
       description: getDescription(),
-      // Column E and F: supply copyable text from sections (stripped clean of images/HTML)
       brand: getBrandTextForSheet(),
       manufacturer: getManufacturerTextForSheet(),
     };
