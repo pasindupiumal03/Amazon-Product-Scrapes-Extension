@@ -27,6 +27,7 @@
   "dependencies": {
     "@babel/plugin-transform-runtime": "^7.23.4",
     "@babel/runtime": "^7.23.4",
+    "@google-cloud/vision": "^5.3.4",
     "babel-polyfill": "^6.26.0",
     "buffer": "^6.0.3",
     "css-loader": "^6.8.1",

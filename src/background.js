@@ -1,10 +1,8 @@
-let TESSERACT = null; // lazy import if you decide to bundle tesseract.js
-
 const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const getCfg = () =>
   new Promise((res) =>
-    chrome.storage.local.get(["GAS_ENDPOINT", "AMAZON_DOMAIN", "OCR_API_KEY"], (v) => res(v))
+    chrome.storage.local.get(["GAS_ENDPOINT", "AMAZON_DOMAIN"], (v) => res(v))
   );
 
 const setBadge = async (text, color = "#000") => {
@@ -49,7 +47,7 @@ function isDecorativeOrTiny(url) {
   if (!url) return true;
   const u = url.toLowerCase();
   if (!/\.(jpg|jpeg|png)$/i.test(u)) return true;
-  if (/(sprite|spacer|pixel|favicon|icon|logo|placeholder)/i.test(u)) return true;
+  if (/(sprite|spacer|pixel|favicon|icon|logo|placeholder|transparent)/i.test(u)) return true;
   if (/__ac_sr\d{2,3},\d{2,3}__/i.test(u)) return true;
   if (/_sx\d{2,3}_/i.test(u)) return true;
   if (/_ss\d{2,3}_/i.test(u)) return true;
@@ -57,14 +55,12 @@ function isDecorativeOrTiny(url) {
 }
 
 function buildUrlVariants(u0) {
-  // Try multiple forms because Amazon size tokens often produce empty/blocked images
   const variants = [];
   const u = String(u0 || "").trim();
   if (!u) return variants;
 
-  variants.push(u); // original first
+  variants.push(u); // original
 
-  // Strip common size suffixes
   let base = u
     .replace(/_AC_SL\d+_/i, "_AC_SL1500_")
     .replace(/_AC_UL\d+_/i, "_AC_SL1500_")
@@ -73,20 +69,17 @@ function buildUrlVariants(u0) {
     .replace(/_SX\d+_/i, "_AC_SL1500_")
     .replace(/_SS\d+_/i, "_AC_SL1500_");
 
-  // If dynamic token exists, force a large one
   if (/\._[^.]*\./.test(base)) {
     base = base.replace(/\._[^.]*\./, "._AC_SL1500_.");
   }
   if (!variants.includes(base)) variants.push(base);
 
-  // Also try with tokens completely removed (sometimes works better)
   const stripped = u
     .replace(/(\._[^.]*\.)/g, ".")
     .replace(/_AC_[A-Z]{2}\d+_/gi, "")
     .replace(/_[A-Z]{2}\d+_/gi, "");
   if (!variants.includes(stripped)) variants.push(stripped);
 
-  // Some A+ assets max at ~1464 or ~1200
   const alt1500 = base.replace(/_AC_SL1500_/i, "_AC_SL1464_");
   if (!variants.includes(alt1500)) variants.push(alt1500);
   const alt1200 = base.replace(/_AC_SL1500_/i, "_AC_SL1200_");
@@ -162,38 +155,21 @@ function sendMessageWithRetry(tabId, message, retries = 18, delay = 450) {
 }
 
 async function getPriorityOcrImages(tabId) {
+  console.log(`=== Getting OCR images for tab ${tabId} ===`);
   const res = await sendMessageWithRetry(tabId, { type: "GET_OCR_IMAGES" });
   const list = Array.isArray(res?.images) ? res.images : [];
+  console.log(`Raw images received from content script: ${list.length}`, list);
+  
   const filtered = list.filter((u) => !isDecorativeOrTiny(u));
-  return filtered.slice(0, 4);
+  console.log(`After filtering decorative images: ${filtered.length}`, filtered);
+  
+  const final = filtered.slice(0, 4);
+  console.log(`Final OCR images to process: ${final.length}`, final);
+  
+  return final;
 }
 
-// --------- OCR.Space: GET + POST, param variants, key rotation ----------
-function buildOcrGetUrl(key, imageUrl, extraParams = {}) {
-  const params = new URLSearchParams({
-    apikey: key,
-    url: imageUrl,
-    language: "eng",
-    isOverlayRequired: "false",
-    OCREngine: "2",
-    scale: "true",
-    isTable: "false",
-    ...extraParams,
-  });
-  return `https://api.ocr.space/parse/imageurl?${params.toString()}`;
-}
-
-function parseOcrSpaceText(json) {
-  if (!json) return "";
-  if (json.IsErroredOnProcessing) return "";
-  const txt = (json.ParsedResults || [])
-    .map((p) => (p?.ParsedText || "").trim())
-    .filter(Boolean)
-    .join("\n")
-    .trim();
-  return txt || "";
-}
-
+// --------- Small utils ----------
 async function fetchWithTimeout(url, { method = "GET", ms = 12000, headers, body } = {}) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
@@ -202,120 +178,6 @@ async function fetchWithTimeout(url, { method = "GET", ms = 12000, headers, body
     return res;
   } finally {
     clearTimeout(id);
-  }
-}
-
-// GET attempt
-async function ocrSpaceGetOnce(key, imageUrl, params, timeoutMs) {
-  try {
-    const url = buildOcrGetUrl(key, imageUrl, params);
-    const resp = await fetchWithTimeout(url, { method: "GET", ms: timeoutMs });
-    const json = await resp.json().catch(() => null);
-    return parseOcrSpaceText(json);
-  } catch {
-    return "";
-  }
-}
-
-// POST attempt (/parse/image) – more permissive server-side
-async function ocrSpacePostOnce(key, imageUrl, params, timeoutMs) {
-  try {
-    const form = new URLSearchParams({
-      url: imageUrl,
-      language: params?.language || "eng",
-      isOverlayRequired: params?.isOverlayRequired || "false",
-      OCREngine: params?.OCREngine || "2",
-      scale: params?.scale || "true",
-      isTable: params?.isTable || "false",
-      detectOrientation: params?.detectOrientation || "false",
-    });
-
-    const resp = await fetchWithTimeout("https://api.ocr.space/parse/image", {
-      method: "POST",
-      ms: timeoutMs,
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        apikey: key, // header per docs
-      },
-      body: form,
-    });
-    const json = await resp.json().catch(() => null);
-    return parseOcrSpaceText(json);
-  } catch {
-    return "";
-  }
-}
-
-// Param variants fight empty returns
-const PARAM_VARIANTS = [
-  {}, // default
-  { detectOrientation: "true" },
-  { OCREngine: "1" },
-  { isTable: "true" },
-  { language: "auto" },
-];
-
-// One image → URL variants × params × key rotation, GET then POST
-async function ocrSpaceForImage(keys, imgUrl, fetchTimeoutMs = 12000) {
-  const urlVariants = buildUrlVariants(imgUrl);
-  for (const variantUrl of urlVariants) {
-    for (const params of PARAM_VARIANTS) {
-      for (const key of keys) {
-        // 1) GET
-        let text = await ocrSpaceGetOnce(key, variantUrl, params, fetchTimeoutMs);
-        if (text) return text;
-        // 2) POST (fallback)
-        text = await ocrSpacePostOnce(key, variantUrl, params, fetchTimeoutMs + 3000);
-        if (text) return text;
-        await SLEEP(120); // tiny backoff between keys
-      }
-    }
-  }
-  return "";
-}
-
-// Optional: Tesseract fallback (requires bundling tesseract + lang data in extension)
-async function tesseractFallback(imgUrl, totalTimeoutMs = 12000) {
-  let timeout = null;
-  try {
-    if (!TESSERACT) {
-      TESSERACT = await import(/* webpackChunkName: "tesseract" */ "tesseract.js");
-    }
-    const { createWorker } = TESSERACT;
-
-    const timed = new Promise(async (resolve) => {
-      try {
-        const resp = await fetchWithTimeout(imgUrl, { ms: 8000 });
-        if (!resp.ok) return resolve("");
-        const blob = await resp.blob();
-
-        const worker = await createWorker({ logger: () => {} });
-        try {
-          await worker.loadLanguage("eng");
-          await worker.initialize("eng");
-          const { data } = await worker.recognize(blob);
-          await worker.terminate();
-          const raw = (data && data.text) ? String(data.text) : "";
-          resolve(cleanMergedOcr(raw));
-        } catch {
-          try { await worker.terminate(); } catch {}
-          resolve("");
-        }
-      } catch {
-        resolve("");
-      }
-    });
-
-    const killer = new Promise((resolve) => {
-      timeout = setTimeout(() => resolve(""), totalTimeoutMs);
-    });
-
-    const out = await Promise.race([timed, killer]);
-    return out || "";
-  } catch {
-    return "";
-  } finally {
-    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -330,7 +192,6 @@ function cleanMergedOcr(text) {
     .join("\n");
 }
 
-// Small p-limit with per-task watchdog
 async function mapLimit(items, limit, mapper, perTaskTimeoutMs = 18000) {
   const out = new Array(items.length);
   let i = 0, active = 0;
@@ -359,36 +220,78 @@ async function mapLimit(items, limit, mapper, perTaskTimeoutMs = 18000) {
   });
 }
 
-async function ocrGetMergedWithConcurrency(primaryKey, imageUrls = [], limit = 3) {
-  const keys = uniq([
-    primaryKey || "",
-    "K85105510988957",
-    "K84346977888957",
-    "K83726935488957",
-    "K85995140988957",
-  ]).filter(Boolean);
+// --------- Fiverr API OCR ----------
+async function extractTextFromFiverrAPI(imageUrl, timeoutMs = 12000) {
+  try {
+    const resp = await fetchWithTimeout("https://fiverr-dj8148-server.vercel.app/extract-text", {
+      method: "POST",
+      ms: timeoutMs,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: imageUrl })
+    });
 
-  if (!keys.length || !imageUrls.length) return "";
+    if (!resp.ok) {
+      console.log(`Fiverr API failed for ${imageUrl}: ${resp.status}`);
+      return "";
+    }
+
+    const json = await resp.json().catch(() => null);
+    return (json?.text || "").trim();
+  } catch (e) {
+    console.log(`Fiverr API error for ${imageUrl}:`, e);
+    return "";
+  }
+}
+
+async function fiverrApiForImage(imgUrl, fetchTimeoutMs = 12000) {
+  const variants = buildUrlVariants(imgUrl);
+  for (const v of variants) {
+    const txt = await extractTextFromFiverrAPI(v, fetchTimeoutMs);
+    if (txt) return txt;
+  }
+  return "";
+}
+
+// --------- Fiverr API Only OCR ----------
+async function ocrGetMergedWithConcurrency(imageUrls = [], limit = 3) {
+  console.log(`=== Starting OCR processing ===`);
+  console.log(`Processing ${imageUrls.length} images with concurrency limit ${limit}`);
+  
+  if (!imageUrls.length) {
+    console.log("No images to process for OCR");
+    return "";
+  }
 
   const texts = await mapLimit(
     imageUrls,
     limit,
-    async (imgUrl) => {
-      if (isDecorativeOrTiny(imgUrl)) return "";
-
-      // OCR.Space with: URL variants × param variants × key rotation; GET then POST
-      let text = await ocrSpaceForImage(keys, imgUrl, 12000);
-
-      // Absolute last resort: Tesseract (only if bundled + allowed)
-      if (!text) {
-        text = await tesseractFallback(imgUrl, 12000);
+    async (imgUrl, index) => {
+      console.log(`=== Processing image ${index + 1}/${imageUrls.length}: ${imgUrl} ===`);
+      
+      if (isDecorativeOrTiny(imgUrl)) {
+        console.log(`Skipping decorative/tiny image: ${imgUrl}`);
+        return "";
       }
+
+      // Fiverr API OCR
+      console.log(`Sending to Fiverr API: ${imgUrl}`);
+      const text = await fiverrApiForImage(imgUrl, 12000);
+      console.log(`OCR result for ${imgUrl}:`, text ? `"${text.substring(0, 100)}..."` : "No text extracted");
       return text || "";
     },
-    20000 // hard cap per image overall
+    20000
   );
 
-  return cleanMergedOcr(texts.filter(Boolean).join("\n\n"));
+  const validTexts = texts.filter(Boolean);
+  console.log(`=== OCR Summary ===`);
+  console.log(`Total images processed: ${imageUrls.length}`);
+  console.log(`Images with extracted text: ${validTexts.length}`);
+  console.log(`Total characters extracted: ${validTexts.join("").length}`);
+  
+  const mergedText = cleanMergedOcr(validTexts.join("\n\n"));
+  console.log(`Final merged OCR text length: ${mergedText.length}`);
+  
+  return mergedText;
 }
 
 // --------- Orchestration ----------
@@ -407,8 +310,8 @@ async function processOne(asin, cfg) {
     let ocrText = "";
     try {
       const images = await getPriorityOcrImages(tabId); // up to 4; already filtered
-      if (images.length && cfg.OCR_API_KEY) {
-        ocrText = await ocrGetMergedWithConcurrency(cfg.OCR_API_KEY, images, 3);
+      if (images.length) {
+        ocrText = await ocrGetMergedWithConcurrency(images, 3);
       }
     } catch {
       // keep empty
@@ -449,10 +352,6 @@ async function startScrape() {
   const cfg = await getCfg();
   if (!cfg.GAS_ENDPOINT) {
     chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "error", message: "Set GAS endpoint first." });
-    return;
-  }
-  if (!cfg.OCR_API_KEY) {
-    chrome.runtime.sendMessage({ type: "RUN_STATUS", status: "error", message: "Set OCR API key in settings." });
     return;
   }
 
