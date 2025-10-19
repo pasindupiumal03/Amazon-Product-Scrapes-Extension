@@ -4,15 +4,13 @@ import "./index.css";
 
 function Popup() {
   const [gas, setGas] = useState("");
-  const [ocr, setOcr] = useState("");
   const [domain, setDomain] = useState("amazon.com");
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState({ idx: 0, total: 0, asin: "" });
 
   useEffect(() => {
-    chrome.storage.local.get(["GAS_ENDPOINT", "AMAZON_DOMAIN", "OCR_API_KEY"], (v) => {
+    chrome.storage.local.get(["GAS_ENDPOINT", "AMAZON_DOMAIN"], (v) => {
       setGas(v.GAS_ENDPOINT || "");
-      setOcr(v.OCR_API_KEY || "");
       setDomain(v.AMAZON_DOMAIN || "amazon.com");
     });
 
@@ -32,7 +30,6 @@ function Popup() {
   }, []);
 
   const save = async () => {
-    // Normalize domain to just host (no protocol, no www)
     const raw = (domain || "").trim();
     let norm = raw;
     try {
@@ -48,7 +45,6 @@ function Popup() {
 
     await chrome.storage.local.set({
       GAS_ENDPOINT: gas.trim(),
-      OCR_API_KEY: ocr.trim(),
       AMAZON_DOMAIN: norm
     });
     setDomain(norm);
@@ -64,7 +60,6 @@ function Popup() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-blue-50">
-      {/* Header */}
       <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 shadow-lg">
         <div className="flex items-center space-x-3">
           <img 
@@ -80,14 +75,12 @@ function Popup() {
           />
           <div>
             <h1 className="text-white text-xl font-bold">Amazon Product Scraper</h1>
-            <p className="text-orange-100 text-sm">Extract product data to Google Sheets (with OCR)</p>
+            <p className="text-orange-100 text-sm">Extract product data to Google Sheets (Vision OCR + fallback)</p>
           </div>
         </div>
       </div>
 
-      {/* Content */}
       <div className="p-6 space-y-6">
-        {/* Configuration Section */}
         <div className="bg-white rounded-xl shadow-md p-5 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
             <svg className="w-5 h-5 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -108,21 +101,6 @@ function Popup() {
                 placeholder="https://script.google.com/macros/s/XXXX/exec"
                 className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors text-sm"
               />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                OCR.Space API Key (Required)
-              </label>
-              <input
-                value={ocr}
-                onChange={(e) => setOcr(e.target.value)}
-                placeholder="e.g. K8*****88957"
-                className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors text-sm"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Used for extracting text from images in <em>From the brand</em>, <em>From the manufacturer</em>, and <em>Product Description</em>.
-              </p>
             </div>
 
             <div>
@@ -154,7 +132,6 @@ function Popup() {
           </div>
         </div>
 
-        {/* Status Section */}
         {(status || progress.total > 0) && (
           <div className="bg-white rounded-xl shadow-md p-5 border border-gray-100">
             <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center">
@@ -165,16 +142,14 @@ function Popup() {
             </h3>
             
             {status && (
-              <div className="mb-3">
-                <div className={`px-4 py-3 rounded-lg text-sm font-medium ${
-                  status.includes('Error') 
-                    ? 'bg-red-50 text-red-700 border border-red-200' 
-                    : status.includes('Done') 
-                      ? 'bg-green-50 text-green-700 border border-green-200'
-                      : 'bg-blue-50 text-blue-700 border border-blue-200'
-                }`}>
-                  {status}
-                </div>
+              <div className={`mb-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                status.includes('Error') 
+                  ? 'bg-red-50 text-red-700 border border-red-200' 
+                  : status.includes('Done') 
+                    ? 'bg-green-50 text-green-700 border border-green-200'
+                    : 'bg-blue-50 text-blue-700 border border-blue-200'
+              }`}>
+                {status}
               </div>
             )}
             
@@ -201,7 +176,6 @@ function Popup() {
           </div>
         )}
 
-        {/* Info Section */}
         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-5 border border-indigo-200">
           <h3 className="text-lg font-semibold text-indigo-800 mb-3 flex items-center">
             <svg className="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -211,9 +185,9 @@ function Popup() {
           </h3>
           <div className="space-y-2 text-sm text-indigo-700">
             <p>• Put ASINs in Column A of your Google Sheet (starting from A2)</p>
-            <p>• Set your Google Apps Script Web App URL and OCR.Space API key above</p>
-            <p>• Click <em>Start Scraping</em> to extract: Title, Bullets, Description, Brand Text, Manufacturer Text, OCR Text</p>
-            <p>• OCR pulls from images found in <em>From the brand</em> → <em>From the manufacturer</em> → <em>Product Description</em> (in that order)</p>
+            <p>• Set your Google Apps Script Web App URL and click <em>Start Scraping</em></p>
+            <p>• Fields saved: Title, Bullets, Description, Brand Text, Manufacturer Text, OCR Text</p>
+            <p>• OCR uses <strong>Google Vision</strong> first, then silently falls back to <strong>OCR.Space</strong> if Vision returns nothing</p>
           </div>
         </div>
       </div>
